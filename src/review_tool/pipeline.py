@@ -271,6 +271,18 @@ def run_review(
                     console.print(f"[yellow]code_graph_search JAR not available: {e}[/yellow]")
                     use_graph = False
 
+            # If auto_start is enabled but we have no JAR, we can't start — disable graph
+            if use_graph and config.graph.auto_start and not jar_path:
+                log.warning(
+                    "auto_start is enabled but no jar_path or code_graph_search_dir configured — "
+                    "disabling graph. Set graph.jar_path or graph.code_graph_search_dir in config."
+                )
+                console.print(
+                    "[yellow]code_graph_search: auto_start enabled but no JAR configured. "
+                    "Set graph.jar_path in review_tool.json.[/yellow]"
+                )
+                use_graph = False
+
             if use_graph and config.graph.auto_start and jar_path:
                 # Generate branch-aware config with the dynamic port
                 progress.update(task, description=f"Starting code_graph_search on port {graph_port}...")

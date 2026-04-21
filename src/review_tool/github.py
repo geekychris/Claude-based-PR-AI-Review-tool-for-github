@@ -242,7 +242,7 @@ def post_commit_status(
     *,
     state: str,
     description: str,
-    context: str = "ai-review / review-tool",
+    context: str = "AIdrian",
     target_url: str = "",
     config: AppConfig,
 ) -> None:

@@ -62,7 +62,7 @@ class GraphConfig(BaseModel):
 
 
 class SkillsConfig(BaseModel):
-    enabled: list[str] = ["defects", "security", "quality"]
+    enabled: list[str] = ["defects", "security", "quality", "java", "rust", "go", "typescript"]
     custom_skills_dir: str | None = None
 
 

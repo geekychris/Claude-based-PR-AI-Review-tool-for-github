@@ -16,7 +16,7 @@ from review_tool.formatter import (
     format_inline_comments,
     format_review_body,
 )
-from review_tool.github import checkout_pr, fetch_pr, post_inline_comment, post_review
+from review_tool.github import checkout_pr, fetch_pr, post_commit_status, post_inline_comment, post_review
 from review_tool.graph_client import GraphClient
 from review_tool.graph_lifecycle import (
     ensure_jar,
@@ -28,7 +28,7 @@ from review_tool.graph_lifecycle import (
     wait_for_indexing,
     wait_for_ready,
 )
-from review_tool.models import PRData, ReviewContext, SkillResult
+from review_tool.models import PRData, ReviewContext, Severity, SkillResult
 from review_tool.prompt_builder import build_review_prompt, build_system_prompt
 from review_tool.skills import BaseSkill, SkillRegistry
 
@@ -200,6 +200,19 @@ def run_review(
 
     console.print(f"[bold]Reviewing:[/bold] {pr_url}")
     console.print(f"[bold]Skills:[/bold] {', '.join(s.name for s in skills)}")
+
+    # Post pending commit status
+    if not dry_run:
+        try:
+            post_commit_status(
+                pr_url,
+                state="pending",
+                description=f"AI review in progress ({len(skills)} skills)...",
+                target_url=pr_url,
+                config=config,
+            )
+        except Exception:
+            log.debug("Failed to post pending commit status", exc_info=True)
 
     # Step 1: Fetch PR data
     with Progress(
@@ -475,5 +488,29 @@ def run_review(
             progress.update(task, description="Review posted")
 
         console.print(f"\n[green]Review posted to {pr_url}[/green]")
+
+    # Post final commit status
+    if not dry_run:
+        try:
+            has_critical = any(
+                f.severity in (Severity.CRITICAL, Severity.HIGH)
+                for f in all_findings
+            )
+            if not all_findings:
+                state, desc = "success", "AI review passed — no issues found"
+            elif has_critical:
+                state, desc = "failure", f"AI review: {len(all_findings)} issue(s), including critical/high"
+            else:
+                state, desc = "success", f"AI review complete: {len(all_findings)} issue(s) (no critical/high)"
+
+            post_commit_status(
+                pr_url,
+                state=state,
+                description=desc,
+                target_url=pr_url,
+                config=config,
+            )
+        except Exception:
+            log.debug("Failed to post final commit status", exc_info=True)
 
     return results

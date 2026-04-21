@@ -235,3 +235,69 @@ def post_inline_comment(
     )
     if result.returncode != 0:
         raise RuntimeError(f"Failed to post inline comment: {result.stderr.strip()}")
+
+
+def post_commit_status(
+    url: str,
+    *,
+    state: str,
+    description: str,
+    context: str = "ai-review / review-tool",
+    target_url: str = "",
+    config: AppConfig,
+) -> None:
+    """Post a commit status to the head commit of the PR.
+
+    Args:
+        url: GitHub PR URL.
+        state: One of 'pending', 'success', 'failure', 'error'.
+        description: Short description (max ~140 chars).
+        context: Identifies this status check (shown in PR checks list).
+        target_url: Optional link to detailed results.
+        config: App config for auth.
+    """
+    owner, repo, number = parse_pr_url(url)
+    token = config.github.resolved_token()
+
+    # Get the head commit SHA
+    pr_raw = _run_gh(["pr", "view", url, "--json", "headRefOid"], token=token)
+    sha = json.loads(pr_raw).get("headRefOid", "")
+    if not sha:
+        log.warning("Could not get head commit SHA for %s", url)
+        return
+
+    payload_dict: dict = {
+        "state": state,
+        "description": description[:140],
+        "context": context,
+    }
+    if target_url:
+        payload_dict["target_url"] = target_url
+
+    payload = json.dumps(payload_dict)
+
+    env = None
+    if token:
+        import os
+        env = {**os.environ, "GH_TOKEN": token}
+
+    log.info(
+        "Posting commit status: %s/%s@%s state=%s context='%s' desc='%s'",
+        owner, repo, sha[:8], state, context, description[:50],
+    )
+
+    result = subprocess.run(
+        [
+            "gh", "api",
+            f"repos/{owner}/{repo}/statuses/{sha}",
+            "--method", "POST",
+            "--input", "-",
+        ],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        log.warning("Failed to post commit status: %s", result.stderr.strip())

@@ -19,7 +19,7 @@
     "mcp_mode": false
   },
   "skills": {
-    "enabled": ["defects", "security", "quality"],
+    "enabled": ["defects", "security", "quality", "java", "rust", "go", "typescript"],
     "custom_skills_dir": null
   },
   "verbosity": 1,

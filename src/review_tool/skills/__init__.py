@@ -195,6 +195,10 @@ def _parse_findings_from_markdown(text: str, category: str) -> list[Finding]:
 
 # Import built-in skills to auto-register them
 from review_tool.skills import defects as _defects  # noqa: F401, E402
+from review_tool.skills import lang_go as _lang_go  # noqa: F401, E402
+from review_tool.skills import lang_java as _lang_java  # noqa: F401, E402
+from review_tool.skills import lang_rust as _lang_rust  # noqa: F401, E402
+from review_tool.skills import lang_typescript as _lang_typescript  # noqa: F401, E402
 from review_tool.skills import performance as _performance  # noqa: F401, E402
 from review_tool.skills import quality as _quality  # noqa: F401, E402
 from review_tool.skills import security as _security  # noqa: F401, E402

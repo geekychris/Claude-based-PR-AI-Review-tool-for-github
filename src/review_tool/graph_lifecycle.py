@@ -16,6 +16,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import socket
+
 from review_tool.config import GraphConfig
 from review_tool.graph_client import GraphClient
 
@@ -77,6 +79,18 @@ def ensure_jar(cgs_dir: str) -> Path:
 
     log.info("JAR not found, building from source...")
     return build_jar(cgs_dir)
+
+
+# ── Port allocation ──────────────────────────────────────────────────────────
+
+
+def find_free_port() -> int:
+    """Find an available TCP port by binding to port 0 and reading the assignment."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    log.info("Allocated free port: %d", port)
+    return port
 
 
 # ── Config generation ────────────────────────────────────────────────────────

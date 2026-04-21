@@ -20,6 +20,7 @@ from review_tool.github import checkout_pr, fetch_pr, post_inline_comment, post_
 from review_tool.graph_client import GraphClient
 from review_tool.graph_lifecycle import (
     ensure_jar,
+    find_free_port,
     generate_graph_config,
     generate_mcp_config,
     start_graph_server,
@@ -236,9 +237,18 @@ def run_review(
         ) as progress:
             task = progress.add_task("Initializing code_graph_search...", total=None)
 
+            # In auto_start mode, allocate a dynamic port so concurrent reviews
+            # each get their own isolated server instance.
+            graph_host = config.graph.host
+            graph_port = None
+
+            if config.graph.auto_start:
+                graph_port = find_free_port()
+                graph_host = f"http://localhost:{graph_port}"
+
             log.info("=" * 60)
             log.info("CODE_GRAPH_SEARCH: Initializing")
-            log.info("  Host: %s", config.graph.host)
+            log.info("  Host: %s", graph_host)
             log.info("  Auto-start: %s", config.graph.auto_start)
             log.info("  JAR path: %s", config.graph.jar_path or "(auto-detect)")
             log.info("  Source dir: %s", config.graph.code_graph_search_dir or "(not set)")
@@ -262,20 +272,21 @@ def run_review(
                     use_graph = False
 
             if use_graph and config.graph.auto_start and jar_path:
-                # Generate branch-aware config and start server
-                progress.update(task, description="Starting code_graph_search server...")
+                # Generate branch-aware config with the dynamic port
+                progress.update(task, description=f"Starting code_graph_search on port {graph_port}...")
 
                 graph_config_path = str(generate_graph_config(
                     repo_path=str(repo_dir),
                     repo_id=repo_id,
                     repo_name=f"{pr_data.owner}/{pr_data.repo}",
                     branch=pr_data.head_branch,
+                    port=graph_port,
                 ))
 
                 try:
-                    log_file = str(Path(config.repo_checkout_dir) / "code_graph_search.log")
+                    log_file = str(Path(config.repo_checkout_dir) / f"code_graph_search_{graph_port}.log")
                     graph_process = start_graph_server(jar_path, graph_config_path, log_file=log_file)
-                    console.print(f"  code_graph_search server log: {log_file}")
+                    console.print(f"  code_graph_search on port {graph_port} (log: {log_file})")
                 except Exception as e:
                     log.error("Failed to start code_graph_search: %s", e)
                     console.print(f"[yellow]code_graph_search failed to start: {e}[/yellow]")
@@ -283,9 +294,9 @@ def run_review(
 
             if use_graph and config.graph.auto_start and graph_process:
                 # Wait for server to be ready
-                progress.update(task, description="Waiting for code_graph_search to start...")
+                progress.update(task, description=f"Waiting for code_graph_search (port {graph_port})...")
                 log.info("Waiting for server to be ready (timeout=%ds)...", config.graph.startup_timeout_seconds)
-                ready = wait_for_ready(config.graph.host, config.graph.startup_timeout_seconds)
+                ready = wait_for_ready(graph_host, config.graph.startup_timeout_seconds)
 
                 if not ready:
                     log.warning("code_graph_search did not start within timeout")
@@ -297,12 +308,12 @@ def run_review(
                     log.info("Server is up — waiting for initial indexing...")
 
             elif use_graph and not config.graph.auto_start:
-                # External server mode — check health
-                log.info("Checking external code_graph_search at %s...", config.graph.host)
-                client = GraphClient(config.graph.host)
+                # External server mode — use configured host, check health
+                log.info("Checking external code_graph_search at %s...", graph_host)
+                client = GraphClient(graph_host)
                 if not client.healthy():
-                    log.warning("code_graph_search not reachable at %s", config.graph.host)
-                    console.print(f"[yellow]code_graph_search not reachable at {config.graph.host}, continuing without it[/yellow]")
+                    log.warning("code_graph_search not reachable at %s", graph_host)
+                    console.print(f"[yellow]code_graph_search not reachable at {graph_host}, continuing without it[/yellow]")
                     use_graph = False
                 else:
                     log.info("External code_graph_search is healthy")
@@ -310,7 +321,7 @@ def run_review(
 
             # Index the PR branch content
             if use_graph:
-                graph_client = GraphClient(config.graph.host)
+                graph_client = GraphClient(graph_host)
 
                 if config.graph.auto_start and graph_process:
                     # Server was started with config pointing at the repo —

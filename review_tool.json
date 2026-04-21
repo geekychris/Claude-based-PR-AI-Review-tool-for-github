@@ -19,15 +19,22 @@
     "enabled": true,
     "host": "http://localhost:8080",
     "startup_timeout_seconds": 120,
-    "jar_path": null,
+    "jar_path": "/Users/chris/code/claude_world/code_graph_search/app/target/code-graph-search.jar",
+    "code_graph_search_dir": "/Users/chris/code/claude_world/code_graph_search",
     "config_path": null,
-    "mcp_mode": false
+    "mcp_mode": false,
+    "auto_start": true,
+    "index_timeout_seconds": 120
   },
   "skills": {
     "enabled": [
       "defects",
       "security",
-      "quality"
+      "quality",
+      "java",
+      "rust",
+      "go",
+      "typescript"
     ],
     "custom_skills_dir": null
   },

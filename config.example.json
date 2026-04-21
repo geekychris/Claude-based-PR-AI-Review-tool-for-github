@@ -14,8 +14,11 @@
     "enabled": true,
     "host": "http://localhost:8080",
     "startup_timeout_seconds": 120,
+    "index_timeout_seconds": 120,
     "jar_path": null,
+    "code_graph_search_dir": null,
     "config_path": null,
+    "auto_start": true,
     "mcp_mode": false
   },
   "skills": {

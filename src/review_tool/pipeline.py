@@ -19,10 +19,12 @@ from review_tool.formatter import (
 from review_tool.github import checkout_pr, fetch_pr, post_inline_comment, post_review
 from review_tool.graph_client import GraphClient
 from review_tool.graph_lifecycle import (
+    ensure_jar,
     generate_graph_config,
     generate_mcp_config,
     start_graph_server,
     stop_graph_server,
+    wait_for_indexing,
     wait_for_ready,
 )
 from review_tool.models import PRData, ReviewContext, SkillResult
@@ -220,92 +222,152 @@ def run_review(
         repo_dir = checkout_pr(pr_url, config)
         progress.update(task, description=f"Repo at {repo_dir}")
 
-    # Step 3: Start code_graph_search (if enabled)
+    # Step 3: Start code_graph_search, index the PR branch
     graph_client = None
     graph_process = None
+    graph_config_path = None
     mcp_config_path = None
     use_graph = config.graph.enabled and not no_graph
+    repo_id = f"{pr_data.owner}_{pr_data.repo}"
 
     if use_graph:
         with Progress(
             SpinnerColumn(), TextColumn("{task.description}"), console=console
         ) as progress:
-            task = progress.add_task("Starting code_graph_search...", total=None)
+            task = progress.add_task("Initializing code_graph_search...", total=None)
 
-            log.info("=" * 50)
+            log.info("=" * 60)
             log.info("CODE_GRAPH_SEARCH: Initializing")
             log.info("  Host: %s", config.graph.host)
-            log.info("  JAR path: %s", config.graph.jar_path or "(external)")
+            log.info("  Auto-start: %s", config.graph.auto_start)
+            log.info("  JAR path: %s", config.graph.jar_path or "(auto-detect)")
+            log.info("  Source dir: %s", config.graph.code_graph_search_dir or "(not set)")
             log.info("  MCP mode: %s", config.graph.mcp_mode)
-            log.info("=" * 50)
+            log.info("  Target repo: %s at %s", repo_id, repo_dir)
+            log.info("  PR branch: %s", pr_data.head_branch)
+            log.info("=" * 60)
 
-            if config.graph.jar_path:
-                log.info("Starting code_graph_search subprocess...")
-                graph_process = start_graph_server(config.graph, str(repo_dir))
-                log.info("Waiting for code_graph_search to be ready (timeout=%ds)...", config.graph.startup_timeout_seconds)
-                ready = wait_for_ready(
-                    config.graph.host, config.graph.startup_timeout_seconds
-                )
+            jar_path = config.graph.jar_path
+
+            # Resolve JAR — auto-detect from source dir if needed
+            if config.graph.auto_start and not jar_path and config.graph.code_graph_search_dir:
+                progress.update(task, description="Building code_graph_search...")
+                try:
+                    jar = ensure_jar(config.graph.code_graph_search_dir)
+                    jar_path = str(jar)
+                    log.info("JAR resolved: %s", jar_path)
+                except Exception as e:
+                    log.error("Failed to build/find code_graph_search JAR: %s", e)
+                    console.print(f"[yellow]code_graph_search JAR not available: {e}[/yellow]")
+                    use_graph = False
+
+            if use_graph and config.graph.auto_start and jar_path:
+                # Generate branch-aware config and start server
+                progress.update(task, description="Starting code_graph_search server...")
+
+                graph_config_path = str(generate_graph_config(
+                    repo_path=str(repo_dir),
+                    repo_id=repo_id,
+                    repo_name=f"{pr_data.owner}/{pr_data.repo}",
+                    branch=pr_data.head_branch,
+                ))
+
+                try:
+                    log_file = str(Path(config.repo_checkout_dir) / "code_graph_search.log")
+                    graph_process = start_graph_server(jar_path, graph_config_path, log_file=log_file)
+                    console.print(f"  code_graph_search server log: {log_file}")
+                except Exception as e:
+                    log.error("Failed to start code_graph_search: %s", e)
+                    console.print(f"[yellow]code_graph_search failed to start: {e}[/yellow]")
+                    use_graph = False
+
+            if use_graph and config.graph.auto_start and graph_process:
+                # Wait for server to be ready
+                progress.update(task, description="Waiting for code_graph_search to start...")
+                log.info("Waiting for server to be ready (timeout=%ds)...", config.graph.startup_timeout_seconds)
+                ready = wait_for_ready(config.graph.host, config.graph.startup_timeout_seconds)
+
                 if not ready:
                     log.warning("code_graph_search did not start within timeout")
                     console.print("[yellow]code_graph_search failed to start, continuing without it[/yellow]")
+                    stop_graph_server(graph_process)
+                    graph_process = None
                     use_graph = False
                 else:
-                    log.info("code_graph_search subprocess is ready")
-            else:
-                # Assume it's already running
+                    log.info("Server is up — waiting for initial indexing...")
+
+            elif use_graph and not config.graph.auto_start:
+                # External server mode — check health
                 log.info("Checking external code_graph_search at %s...", config.graph.host)
                 client = GraphClient(config.graph.host)
                 if not client.healthy():
                     log.warning("code_graph_search not reachable at %s", config.graph.host)
-                    console.print("[yellow]code_graph_search not reachable at %s, continuing without it[/yellow]" % config.graph.host)
+                    console.print(f"[yellow]code_graph_search not reachable at {config.graph.host}, continuing without it[/yellow]")
                     use_graph = False
                 else:
-                    log.info("code_graph_search is healthy at %s", config.graph.host)
+                    log.info("External code_graph_search is healthy")
                 client.close()
 
+            # Index the PR branch content
             if use_graph:
                 graph_client = GraphClient(config.graph.host)
 
-                # Register/reindex the repo so code_graph_search has fresh content
-                progress.update(task, description="Indexing repository...")
-                repo_id = f"{pr_data.owner}_{pr_data.repo}"
-                log.info("Registering/reindexing repo: id=%s, path=%s", repo_id, repo_dir)
-                try:
-                    existing = graph_client.list_repos()
-                    existing_ids = [r.get("id", "") for r in existing]
-                    log.info("Existing repos in graph: %s", existing_ids)
-
-                    if repo_id in existing_ids:
-                        log.info("Repo %s already indexed — triggering reindex for fresh PR content", repo_id)
-                        graph_client.reindex_repo(repo_id)
+                if config.graph.auto_start and graph_process:
+                    # Server was started with config pointing at the repo —
+                    # it indexes on startup. Wait for indexing to complete.
+                    progress.update(
+                        task,
+                        description=f"Indexing {pr_data.head_branch} branch ({len(pr_data.files)} changed files)...",
+                    )
+                    indexed = wait_for_indexing(
+                        graph_client,
+                        repo_id,
+                        timeout=config.graph.index_timeout_seconds,
+                    )
+                    if indexed:
+                        console.print(f"  code_graph_search indexed branch [cyan]{pr_data.head_branch}[/cyan]")
                     else:
-                        log.info("Repo %s not found — adding new repo at %s", repo_id, repo_dir)
-                        graph_client.add_repo(
-                            repo_id=repo_id,
-                            name=f"{pr_data.owner}/{pr_data.repo}",
-                            path=str(repo_dir),
-                        )
+                        log.warning("Indexing may be incomplete — continuing with partial graph data")
+                        console.print("[yellow]  code_graph_search indexing may be incomplete[/yellow]")
+                else:
+                    # External server — register/reindex the repo
+                    progress.update(task, description="Registering repo for indexing...")
+                    log.info("Registering/reindexing repo in external server: id=%s, path=%s", repo_id, repo_dir)
+                    try:
+                        existing = graph_client.list_repos()
+                        existing_ids = [r.get("id", "") for r in existing]
+                        log.info("Existing repos in graph: %s", existing_ids)
 
-                    # Wait for indexing to complete
-                    import time
-                    log.info("Waiting 5s for indexing to complete...")
-                    time.sleep(5)
-                    log.info("Indexing wait complete — graph should reflect PR branch content")
-                except Exception:
-                    log.warning("Failed to register/reindex repo in code_graph_search", exc_info=True)
+                        if repo_id in existing_ids:
+                            log.info("Repo %s already indexed — triggering reindex for branch %s", repo_id, pr_data.head_branch)
+                            graph_client.reindex_repo(repo_id)
+                        else:
+                            log.info("Adding repo %s at %s (branch: %s)", repo_id, repo_dir, pr_data.head_branch)
+                            graph_client.add_repo(
+                                repo_id=repo_id,
+                                name=f"{pr_data.owner}/{pr_data.repo}",
+                                path=str(repo_dir),
+                            )
+
+                        progress.update(task, description="Waiting for indexing...")
+                        indexed = wait_for_indexing(
+                            graph_client,
+                            repo_id,
+                            timeout=config.graph.index_timeout_seconds,
+                        )
+                        if indexed:
+                            console.print(f"  code_graph_search indexed branch [cyan]{pr_data.head_branch}[/cyan]")
+                        else:
+                            log.warning("Indexing may be incomplete")
+                    except Exception:
+                        log.warning("Failed to register/reindex repo in code_graph_search", exc_info=True)
 
                 progress.update(task, description="code_graph_search ready")
-                log.info("CODE_GRAPH_SEARCH: Ready for queries")
+                log.info("CODE_GRAPH_SEARCH: Ready for queries (repo=%s, branch=%s)", repo_id, pr_data.head_branch)
 
                 # Generate MCP config if mcp_mode is enabled
-                if config.graph.mcp_mode and config.graph.jar_path:
-                    cfg_path = config.graph.config_path or str(
-                        generate_graph_config(str(repo_dir))
-                    )
-                    mcp_config_path = str(
-                        generate_mcp_config(config.graph.jar_path, cfg_path)
-                    )
+                if config.graph.mcp_mode and jar_path and graph_config_path:
+                    mcp_config_path = str(generate_mcp_config(jar_path, graph_config_path))
 
     # Step 4: Build context and run skills
     context = ReviewContext(

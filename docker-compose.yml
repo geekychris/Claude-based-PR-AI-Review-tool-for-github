@@ -1,0 +1,24 @@
+services:
+  review-tool:
+    build: .
+    environment:
+      - GH_TOKEN=${GH_TOKEN}
+      # For Claude CLI with Max Pro: mount ~/.claude instead of setting API key
+      # For API key auth: uncomment below
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CGS_JAR_PATH=/opt/code-graph-search/code-graph-search.jar
+    volumes:
+      # Mount Claude Code credentials from host (Max Pro OAuth tokens)
+      - ${HOME}/.claude:/root/.claude:ro
+      # Mount config file
+      - ./review_tool.json:/config/review_tool.json:ro
+      # Cache repo checkouts between runs
+      - review_repos:/repos
+      # Mount guidance files if used
+      # - ./guidance:/guidance:ro
+    # Example: review a PR
+    # docker compose run review-tool review-tool review https://github.com/owner/repo/pull/123 -c /config/review_tool.json
+    command: ["review-tool", "--help"]
+
+volumes:
+  review_repos:

@@ -1,0 +1,37 @@
+{
+  "github": {
+    "token": "${GH_TOKEN}"
+  },
+  "claude": {
+    "model": "sonnet",
+    "max_turns": 30,
+    "max_budget_usd": 1.0,
+    "allowed_tools": [
+      "Bash",
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "permission_mode": "bypassPermissions",
+    "extra_system_prompt": ""
+  },
+  "graph": {
+    "enabled": true,
+    "host": "http://localhost:8080",
+    "startup_timeout_seconds": 120,
+    "jar_path": null,
+    "config_path": null,
+    "mcp_mode": false
+  },
+  "skills": {
+    "enabled": [
+      "defects",
+      "security",
+      "quality"
+    ],
+    "custom_skills_dir": null
+  },
+  "verbosity": 1,
+  "repo_checkout_dir": "/tmp/review_tool_repos",
+  "guidance_file": null
+}

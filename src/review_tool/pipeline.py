@@ -301,6 +301,12 @@ def run_review(
 
             # Post inline comments for specific findings
             inline_comments = format_inline_comments(results)
+            suggestions_count = sum(1 for c in inline_comments if "```suggestion" in c["body"])
+            log.info(
+                "Posting %d inline comments (%d with code suggestions)",
+                len(inline_comments),
+                suggestions_count,
+            )
             for comment in inline_comments:
                 try:
                     post_inline_comment(
@@ -308,6 +314,8 @@ def run_review(
                         path=comment["path"],
                         line=comment["line"],
                         body=comment["body"],
+                        start_line=comment.get("start_line"),
+                        start_side=comment.get("start_side"),
                         config=config,
                     )
                 except Exception:

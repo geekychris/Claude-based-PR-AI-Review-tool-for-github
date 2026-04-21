@@ -40,7 +40,8 @@ class Finding:
     title: str
     description: str
     line_end: int | None = None
-    suggestion: str | None = None
+    suggestion: str | None = None  # prose description of the fix
+    code_suggestion: str | None = None  # exact replacement code for GitHub suggestion block
 
     def sort_key(self) -> tuple[int, str, int]:
         return (self.severity.rank, self.file, self.line_start)

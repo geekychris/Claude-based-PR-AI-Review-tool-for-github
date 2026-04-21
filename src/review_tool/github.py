@@ -175,9 +175,15 @@ def post_inline_comment(
     line: int,
     body: str,
     side: str = "RIGHT",
+    start_line: int | None = None,
+    start_side: str | None = None,
     config: AppConfig,
 ) -> None:
-    """Post an inline review comment on a specific file/line in the PR diff."""
+    """Post an inline review comment on a specific file/line in the PR diff.
+
+    For multi-line comments (needed for GitHub suggestion blocks), pass
+    start_line and start_side to define the range [start_line, line].
+    """
     owner, repo, number = parse_pr_url(url)
     token = config.github.resolved_token()
 
@@ -185,20 +191,34 @@ def post_inline_comment(
     pr_raw = _run_gh(["pr", "view", url, "--json", "headRefOid"], token=token)
     commit_id = json.loads(pr_raw).get("headRefOid", "")
 
-    payload = json.dumps(
-        {
-            "body": body,
-            "path": path,
-            "line": line,
-            "side": side,
-            "commit_id": commit_id,
-        }
-    )
+    payload_dict: dict = {
+        "body": body,
+        "path": path,
+        "line": line,
+        "side": side,
+        "commit_id": commit_id,
+    }
+
+    # Multi-line range for suggestion blocks
+    if start_line is not None and start_line != line:
+        payload_dict["start_line"] = start_line
+        payload_dict["start_side"] = start_side or side
+
+    payload = json.dumps(payload_dict)
 
     env = None
     if token:
         import os
         env = {**os.environ, "GH_TOKEN": token}
+
+    log.info(
+        "Posting inline comment: %s:%s%s (%d chars, %s)",
+        path,
+        f"{start_line}-{line}" if start_line else str(line),
+        " [has suggestion]" if "```suggestion" in body else "",
+        len(body),
+        side,
+    )
 
     result = subprocess.run(
         [

@@ -105,7 +105,9 @@ def format_inline_comments(
 ) -> list[dict]:
     """Build a list of inline comment dicts for posting to GitHub.
 
-    Each dict has: path, line, body, side.
+    Each dict has: path, line, start_line (for multi-line), body, side.
+    When a finding has a code_suggestion, the body includes a GitHub
+    suggestion block that the PR author can accept with one click.
     """
     findings = aggregate_results(results)
     comments = []
@@ -114,17 +116,26 @@ def format_inline_comments(
         icon = SEVERITY_ICONS[f.severity]
         body = f"{icon} **[{f.severity.value.upper()}] {f.title}** [{f.category}]\n\n"
         body += f.description
-        if f.suggestion:
+
+        if f.code_suggestion is not None:
+            # GitHub suggestion block — author can click "Apply suggestion"
+            body += f"\n\n```suggestion\n{f.code_suggestion}\n```"
+        elif f.suggestion:
             body += f"\n\n> **Suggestion:** {f.suggestion}"
 
-        comments.append(
-            {
-                "path": f.file,
-                "line": f.line_start,
-                "body": body,
-                "side": "RIGHT",
-            }
-        )
+        comment: dict = {
+            "path": f.file,
+            "line": f.line_end if f.line_end else f.line_start,
+            "body": body,
+            "side": "RIGHT",
+        }
+
+        # Multi-line range: GitHub API uses start_line + line for the range
+        if f.line_end and f.line_end > f.line_start:
+            comment["start_line"] = f.line_start
+            comment["start_side"] = "RIGHT"
+
+        comments.append(comment)
 
     return comments
 

@@ -133,7 +133,10 @@ def _parse_findings_from_markdown(text: str, category: str) -> list[Finding]:
     Expects findings in a format like:
     **[SEVERITY]** `file:line` - Title
     Description text...
-    > Suggestion: ...
+    > Suggestion: prose description
+    ```suggestion
+    replacement code
+    ```
     """
     from review_tool.models import Severity
 
@@ -161,14 +164,37 @@ def _parse_findings_from_markdown(text: str, category: str) -> list[Finding]:
             line_end = int(m.group(4)) if m.group(4) else None
             title = m.group(5).strip()
 
-            # Collect description lines until next finding or section
+            # Collect description, suggestion prose, and code suggestion
             desc_lines = []
             suggestion = None
+            code_suggestion = None
             i += 1
             while i < len(lines):
                 line = lines[i].strip()
                 if pattern.match(line) or line.startswith("## ") or line.startswith("### "):
                     break
+
+                # Parse ```suggestion code blocks
+                if line == "```suggestion":
+                    code_lines = []
+                    i += 1
+                    while i < len(lines):
+                        if lines[i].strip() == "```":
+                            i += 1
+                            break
+                        code_lines.append(lines[i])  # preserve original indentation
+                        i += 1
+                    code_suggestion = "\n".join(code_lines)
+                    continue
+
+                # Skip other code blocks (not suggestions)
+                if line.startswith("```"):
+                    i += 1
+                    while i < len(lines) and lines[i].strip() != "```":
+                        i += 1
+                    i += 1  # skip closing ```
+                    continue
+
                 if line.startswith("> Suggestion:") or line.startswith("> Fix:"):
                     suggestion = line.split(":", 1)[1].strip()
                 elif line:
@@ -185,6 +211,7 @@ def _parse_findings_from_markdown(text: str, category: str) -> list[Finding]:
                     title=title,
                     description="\n".join(desc_lines),
                     suggestion=suggestion,
+                    code_suggestion=code_suggestion,
                 )
             )
         else:

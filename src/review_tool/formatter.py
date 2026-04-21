@@ -78,13 +78,12 @@ def format_review_body(
                 loc += f"-{f.line_end}"
             loc += "`"
 
-            lines.append(f"- **{f.title}** — {loc} [{f.category}]")
+            lines.append(f"- {f.title} — {loc} *{f.category}*")
             if verbosity >= 1 and f.description:
-                # Indent description
                 for desc_line in f.description.split("\n"):
                     lines.append(f"  {desc_line}")
             if verbosity >= 1 and f.suggestion:
-                lines.append(f"  > **Suggestion:** {f.suggestion}")
+                lines.append(f"  💡 {f.suggestion}")
             lines.append("")
 
     # Per-skill summaries (collapsed at lower verbosity)
@@ -114,14 +113,17 @@ def format_inline_comments(
 
     for f in findings:
         icon = SEVERITY_ICONS[f.severity]
-        body = f"{icon} **[{f.severity.value.upper()}] {f.title}** [{f.category}]\n\n"
+        sev = f.severity.value.upper()
+
+        # Clean, scannable format: icon + severity tag + title on one line
+        body = f"{icon} `{sev}` {f.title} &nbsp;·&nbsp; *{f.category}*\n\n"
         body += f.description
 
         if f.code_suggestion is not None:
             # GitHub suggestion block — author can click "Apply suggestion"
             body += f"\n\n```suggestion\n{f.code_suggestion}\n```"
         elif f.suggestion:
-            body += f"\n\n> **Suggestion:** {f.suggestion}"
+            body += f"\n\n💡 {f.suggestion}"
 
         comment: dict = {
             "path": f.file,

@@ -152,10 +152,20 @@ def post_review(
             ["pr", "review", url, flag, "--body-file", body_file],
             token=token,
         )
+        log.info("Posted %s review to %s", event, url)
+    except RuntimeError as e:
+        if "request changes on your own" in str(e).lower() and event == "REQUEST_CHANGES":
+            # GitHub doesn't allow REQUEST_CHANGES on your own PR — fall back to COMMENT
+            log.warning("Cannot request changes on own PR, falling back to COMMENT")
+            _run_gh(
+                ["pr", "review", url, "--comment", "--body-file", body_file],
+                token=token,
+            )
+            log.info("Posted COMMENT review to %s (fallback from REQUEST_CHANGES)", url)
+        else:
+            raise
     finally:
         Path(body_file).unlink(missing_ok=True)
-
-    log.info("Posted %s review to %s", event, url)
 
 
 def post_inline_comment(

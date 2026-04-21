@@ -45,7 +45,7 @@ def format_review_body(
     """Format all findings into a GitHub review body (markdown)."""
     findings = aggregate_results(results)
 
-    lines = ["## AIdrian Code Review\n"]
+    lines = ["## aPRAI Code Review\n"]
 
     # Summary stats
     skill_names = [r.skill_name for r in results]
@@ -95,7 +95,7 @@ def format_review_body(
                 lines.append(f"#### {r.skill_name}\n{r.summary}\n")
         lines.append("</details>\n")
 
-    lines.append("---\n*Reviewed by AIdrian*")
+    lines.append("---\n*Reviewed by aPRAI*")
     return "\n".join(lines)
 
 

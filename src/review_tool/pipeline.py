@@ -207,7 +207,7 @@ def run_review(
             post_commit_status(
                 pr_url,
                 state="pending",
-                description=f"AIdrian in progress ({len(skills)} skills)...",
+                description=f"aPRAI in progress ({len(skills)} skills)...",
                 target_url=pr_url,
                 config=config,
             )
@@ -497,11 +497,11 @@ def run_review(
                 for f in all_findings
             )
             if not all_findings:
-                state, desc = "success", "AIdrian passed — no issues found"
+                state, desc = "success", "aPRAI passed — no issues found"
             elif has_critical:
-                state, desc = "failure", f"AIdrian: {len(all_findings)} issue(s), including critical/high"
+                state, desc = "failure", f"aPRAI: {len(all_findings)} issue(s), including critical/high"
             else:
-                state, desc = "success", f"AIdrian complete: {len(all_findings)} issue(s) (no critical/high)"
+                state, desc = "success", f"aPRAI complete: {len(all_findings)} issue(s) (no critical/high)"
 
             post_commit_status(
                 pr_url,

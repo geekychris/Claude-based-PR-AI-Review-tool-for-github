@@ -102,37 +102,28 @@ class RustSkill(BaseSkill):
         if not context.graph_client:
             return {}
 
-        extra: dict[str, Any] = {}
-        trait_info = []
+        from review_tool.diff_parser import extract_changed_symbols, symbols_for_language
+        from review_tool.graph_analyzer import run_full_analysis
 
-        for fc in context.pr.files:
-            if not fc.path.endswith(RUST_EXTENSIONS) or fc.status == "removed":
-                continue
-            try:
-                results = context.graph_client.search(fc.path, limit=10)
-                for elem in results[:5]:
-                    eid = elem.get("id", "")
-                    etype = elem.get("elementType", "")
-                    if not eid:
-                        continue
-                    if etype in ("TRAIT", "STRUCT", "ENUM"):
-                        children = context.graph_client.get_children(eid)
-                        if children:
-                            trait_info.append(
-                                {
-                                    "type": etype,
-                                    "name": elem.get("qualifiedName", elem.get("name", "")),
-                                    "members": [
-                                        c.get("name", "") for c in children[:15]
-                                    ],
-                                }
-                            )
-            except Exception:
-                log.debug("Graph query failed for %s", fc.path, exc_info=True)
+        log.info("[rust] Running graph pre-analysis for Rust review")
+        all_symbols = extract_changed_symbols(context.pr.diff_text)
+        symbols = symbols_for_language(all_symbols, "rust")
+        if not symbols:
+            log.info("[rust] No Rust symbols extracted from diff — skipping graph analysis")
+            return {}
 
-        if trait_info:
-            extra["type_definitions"] = trait_info
-        return extra
+        repo_id = f"{context.pr.owner}_{context.pr.repo}"
+        analysis = run_full_analysis(
+            context.graph_client,
+            symbols,
+            repo_id,
+            include_callers=True,     # Who calls changed functions?
+            include_callees=True,     # What does this function call?
+            include_hierarchies=True, # Trait implementations
+            include_children=True,    # Struct fields, trait methods, enum variants
+            include_parents=True,     # Enclosing module/impl block
+        )
+        return analysis.to_prompt_context()
 
 
 SkillRegistry.register(RustSkill())

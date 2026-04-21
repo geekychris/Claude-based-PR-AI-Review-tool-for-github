@@ -103,43 +103,28 @@ class TypeScriptSkill(BaseSkill):
         if not context.graph_client:
             return {}
 
-        extra: dict[str, Any] = {}
-        type_info = []
+        from review_tool.diff_parser import extract_changed_symbols, symbols_for_language
+        from review_tool.graph_analyzer import run_full_analysis
 
-        for fc in context.pr.files:
-            if not fc.path.endswith(TS_EXTENSIONS) or fc.status == "removed":
-                continue
-            try:
-                results = context.graph_client.search(fc.path, limit=10)
-                for elem in results[:5]:
-                    eid = elem.get("id", "")
-                    etype = elem.get("elementType", "")
-                    if not eid:
-                        continue
-                    if etype in ("CLASS", "INTERFACE", "FUNCTION"):
-                        callers = context.graph_client.get_callers(eid)
-                        callees = context.graph_client.get_callees(eid)
-                        info: dict[str, Any] = {
-                            "type": etype,
-                            "name": elem.get("qualifiedName", elem.get("name", "")),
-                        }
-                        if callers:
-                            info["callers"] = [
-                                c.get("qualifiedName", c.get("name", ""))
-                                for c in callers[:10]
-                            ]
-                        if callees:
-                            info["callees"] = [
-                                c.get("qualifiedName", c.get("name", ""))
-                                for c in callees[:10]
-                            ]
-                        type_info.append(info)
-            except Exception:
-                log.debug("Graph query failed for %s", fc.path, exc_info=True)
+        log.info("[typescript] Running graph pre-analysis for TypeScript review")
+        all_symbols = extract_changed_symbols(context.pr.diff_text)
+        symbols = symbols_for_language(all_symbols, "typescript")
+        if not symbols:
+            log.info("[typescript] No TypeScript symbols extracted from diff — skipping graph analysis")
+            return {}
 
-        if type_info:
-            extra["type_graph"] = type_info
-        return extra
+        repo_id = f"{context.pr.owner}_{context.pr.repo}"
+        analysis = run_full_analysis(
+            context.graph_client,
+            symbols,
+            repo_id,
+            include_callers=True,     # Who calls this? Component usage, hook consumers.
+            include_callees=True,     # What does this call? API calls, state mutations.
+            include_hierarchies=True, # Class extends, interface implementations
+            include_children=True,    # Class/interface members
+            include_parents=True,     # Enclosing class/module
+        )
+        return analysis.to_prompt_context()
 
 
 SkillRegistry.register(TypeScriptSkill())

@@ -57,8 +57,11 @@ class GraphConfig(BaseModel):
     host: str = "http://localhost:8080"
     startup_timeout_seconds: int = 120
     jar_path: str | None = None
+    code_graph_search_dir: str | None = None  # source dir — auto-builds JAR if needed
     config_path: str | None = None
     mcp_mode: bool = False
+    auto_start: bool = True  # start/stop server automatically per review
+    index_timeout_seconds: int = 120
 
 
 class SkillsConfig(BaseModel):

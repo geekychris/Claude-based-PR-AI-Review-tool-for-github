@@ -99,35 +99,28 @@ class JavaSkill(BaseSkill):
         if not context.graph_client:
             return {}
 
-        extra: dict[str, Any] = {}
-        hierarchy_info = []
+        from review_tool.diff_parser import extract_changed_symbols, symbols_for_language
+        from review_tool.graph_analyzer import run_full_analysis
 
-        for fc in context.pr.files:
-            if not fc.path.endswith(JAVA_EXTENSIONS) or fc.status == "removed":
-                continue
-            try:
-                results = context.graph_client.search(
-                    fc.path, element_type="CLASS", limit=5
-                )
-                for elem in results[:3]:
-                    eid = elem.get("id", "")
-                    if not eid:
-                        continue
-                    hierarchy = context.graph_client.get_hierarchy(eid)
-                    if hierarchy:
-                        hierarchy_info.append(
-                            {
-                                "class": elem.get("qualifiedName", elem.get("name", "")),
-                                "file": fc.path,
-                                "hierarchy": hierarchy,
-                            }
-                        )
-            except Exception:
-                log.debug("Graph query failed for %s", fc.path, exc_info=True)
+        log.info("[java] Running graph pre-analysis for Java review")
+        all_symbols = extract_changed_symbols(context.pr.diff_text)
+        symbols = symbols_for_language(all_symbols, "java")
+        if not symbols:
+            log.info("[java] No Java symbols extracted from diff — skipping graph analysis")
+            return {}
 
-        if hierarchy_info:
-            extra["class_hierarchies"] = hierarchy_info
-        return extra
+        repo_id = f"{context.pr.owner}_{context.pr.repo}"
+        analysis = run_full_analysis(
+            context.graph_client,
+            symbols,
+            repo_id,
+            include_callers=True,     # Who calls changed methods?
+            include_callees=True,     # What do changed methods call?
+            include_hierarchies=True, # Extends/implements chains
+            include_children=True,    # Class members (check contract completeness)
+            include_parents=True,     # Enclosing class
+        )
+        return analysis.to_prompt_context()
 
 
 SkillRegistry.register(JavaSkill())

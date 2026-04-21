@@ -207,6 +207,29 @@ def run_review(
 
             if use_graph:
                 graph_client = GraphClient(config.graph.host)
+
+                # Register/reindex the repo so code_graph_search has fresh content
+                progress.update(task, description="Indexing repository...")
+                repo_id = f"{pr_data.owner}_{pr_data.repo}"
+                try:
+                    existing = graph_client.list_repos()
+                    existing_ids = [r.get("id", "") for r in existing]
+                    if repo_id in existing_ids:
+                        graph_client.reindex_repo(repo_id)
+                        log.info("Triggered reindex for repo %s", repo_id)
+                    else:
+                        graph_client.add_repo(
+                            repo_id=repo_id,
+                            name=f"{pr_data.owner}/{pr_data.repo}",
+                            path=str(repo_dir),
+                        )
+                        log.info("Added repo %s at %s", repo_id, repo_dir)
+                    # Wait for indexing to settle
+                    import time
+                    time.sleep(5)
+                except Exception:
+                    log.warning("Failed to register/reindex repo in code_graph_search", exc_info=True)
+
                 progress.update(task, description="code_graph_search ready")
 
                 # Generate MCP config if mcp_mode is enabled

@@ -168,7 +168,7 @@ review-tool config init
     "mcp_mode": false
   },
   "skills": {
-    "enabled": ["defects", "security", "quality"],
+    "enabled": ["defects", "security", "quality", "java", "rust", "go", "typescript"],
     "custom_skills_dir": null
   },
   "verbosity": 1,
@@ -274,14 +274,18 @@ Show all available skills and whether they're enabled.
 ```bash
 $ review-tool skills list
               Available Skills
-┏━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Name        ┃ Enabled ┃ Description           ┃
-┡━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━┩
-│ defects     │ yes     │ Detect bugs, logic... │
-│ performance │ no      │ Find performance...   │
-│ quality     │ yes     │ Review code quality.. │
-│ security    │ yes     │ Find security vuln... │
-└─────────────┴─────────┴───────────────────────┘
+┏━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Name        ┃ Enabled ┃ Description                            ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ defects     │ yes     │ Detect bugs, logic errors, race...     │
+│ go          │ yes     │ Go-specific: error handling, gorout... │
+│ java        │ yes     │ Java-specific: null safety, concur... │
+│ performance │ no      │ Find performance issues: N+1 quer...  │
+│ quality     │ yes     │ Review code quality, maintainabil...  │
+│ rust        │ yes     │ Rust-specific: unsafe, ownership,...  │
+│ security    │ yes     │ Find security vulnerabilities, in...  │
+│ typescript  │ yes     │ TypeScript-specific: type safety,...  │
+└─────────────┴─────────┴────────────────────────────────────────┘
 ```
 
 #### `review-tool skills show <name>`
@@ -402,12 +406,23 @@ The skills system is the primary extension point. Each skill:
 
 Built-in skills:
 
+**General skills** (language-agnostic, run on every PR):
+
 | Skill | Focus | Pre-analysis |
 |-------|-------|-------------|
 | `defects` | Bugs, null access, race conditions, resource leaks, logic errors | Finds callers of changed methods |
 | `security` | OWASP Top 10, CWE, injection, auth, data exposure, crypto | Finds input handler functions |
 | `quality` | Naming, complexity, duplication, design patterns, dead code | — |
 | `performance` | N+1 queries, memory leaks, algorithm complexity, blocking I/O | Finds call chains through changed code |
+
+**Language-specific skills** (auto-skip when no matching files in PR):
+
+| Skill | Focus | Pre-analysis |
+|-------|-------|-------------|
+| `java` | NullPointerException, concurrency (synchronized, volatile), resource leaks (try-with-resources), Spring/JPA patterns, Stream API, serialization | Class hierarchies via graph |
+| `rust` | Unsafe soundness, ownership/borrowing, lifetime design, async pitfalls (MutexGuard across .await), error handling (unwrap in lib code), FFI safety | Trait/struct/enum members via graph |
+| `go` | Error handling (unchecked err), goroutine leaks, channel deadlocks, nil map/interface, context propagation, sync.Mutex patterns | Interface/struct definitions via graph |
+| `typescript` | Type safety (any, as, !), async/await pitfalls, React hooks (stale closures, missing deps), null handling, runtime/type mismatches, enum pitfalls | Type graph (callers/callees) via graph |
 
 ### code_graph_search Integration
 
@@ -700,6 +715,10 @@ review_tool/
 │       ├── defects.py       Bug detection
 │       ├── security.py      Security review
 │       ├── quality.py       Code quality
-│       └── performance.py   Performance analysis
+│       ├── performance.py   Performance analysis
+│       ├── lang_java.py     Java-specific review
+│       ├── lang_rust.py     Rust-specific review
+│       ├── lang_go.py       Go-specific review
+│       └── lang_typescript.py TypeScript-specific review
 └── tests/                   Test suite
 ```

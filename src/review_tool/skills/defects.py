@@ -88,42 +88,31 @@ class DefectsSkill(BaseSkill):
         return prompt
 
     def pre_analyze(self, context: ReviewContext) -> dict[str, Any]:
-        """Use code_graph_search to find callers of changed functions."""
+        """Use code_graph_search to find callers of changed functions and parent types."""
         if not context.graph_client:
             return {}
 
-        extra: dict[str, Any] = {}
-        callers_info = []
+        from review_tool.diff_parser import extract_changed_symbols
+        from review_tool.graph_analyzer import run_full_analysis
 
-        for fc in context.pr.files:
-            if fc.status == "removed":
-                continue
-            try:
-                results = context.graph_client.search(
-                    fc.path, element_type="METHOD", limit=10
-                )
-                for elem in results[:5]:
-                    eid = elem.get("id", "")
-                    if not eid:
-                        continue
-                    callers = context.graph_client.get_callers(eid)
-                    if callers:
-                        callers_info.append(
-                            {
-                                "method": elem.get("qualifiedName", elem.get("name", "")),
-                                "file": fc.path,
-                                "callers": [
-                                    c.get("qualifiedName", c.get("name", ""))
-                                    for c in callers[:10]
-                                ],
-                            }
-                        )
-            except Exception:
-                log.debug("Graph query failed for %s", fc.path, exc_info=True)
+        log.info("[defects] Running graph pre-analysis for defect detection")
+        symbols = extract_changed_symbols(context.pr.diff_text)
+        if not symbols:
+            log.info("[defects] No symbols extracted from diff — skipping graph analysis")
+            return {}
 
-        if callers_info:
-            extra["callers"] = callers_info
-        return extra
+        repo_id = f"{context.pr.owner}_{context.pr.repo}"
+        analysis = run_full_analysis(
+            context.graph_client,
+            symbols,
+            repo_id,
+            include_callers=True,     # Who calls changed functions? May be broken.
+            include_callees=True,     # What do changed functions call? May behave differently.
+            include_hierarchies=True, # Does the change violate an interface contract?
+            include_children=False,
+            include_parents=True,     # What class/module owns this method?
+        )
+        return analysis.to_prompt_context()
 
 
 SkillRegistry.register(DefectsSkill())

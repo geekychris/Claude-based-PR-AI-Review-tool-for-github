@@ -50,21 +50,49 @@ def _run_skill(
     mcp_config_path: str | None = None,
 ) -> SkillResult:
     """Execute a single skill: pre-analyze, build prompt, invoke Claude, parse."""
-    log.info("Running skill: %s", skill.name)
+    log.info("=" * 50)
+    log.info("SKILL: %s — starting", skill.name)
+    log.info("=" * 50)
 
     # Pre-analysis via code_graph_search
+    log.info("[%s] Step 1: Running graph pre-analysis...", skill.name)
     extra_context = skill.pre_analyze(context)
+    if extra_context:
+        log.info(
+            "[%s] Graph pre-analysis returned %d context keys: %s",
+            skill.name,
+            len(extra_context),
+            ", ".join(f"{k}({len(v) if isinstance(v, (list, dict)) else 1})" for k, v in extra_context.items()),
+        )
+    else:
+        log.info("[%s] Graph pre-analysis returned no extra context", skill.name)
 
     # Build prompts
+    log.info("[%s] Step 2: Building prompts...", skill.name)
     system_prompt = build_system_prompt(skill, context)
     review_prompt = build_review_prompt(skill, context, extra_context)
 
     if not review_prompt:
-        log.info("Skill %s skipped (empty prompt)", skill.name)
+        log.info("[%s] Skipped — build_review_prompt returned empty (no matching files)", skill.name)
         return SkillResult(skill_name=skill.name, summary="Skipped — not applicable")
+
+    log.info(
+        "[%s] Prompt size: system=%d chars, review=%d chars",
+        skill.name,
+        len(system_prompt),
+        len(review_prompt),
+    )
 
     # Invoke Claude
     budget = skill.max_budget_usd() or context.config.claude.max_budget_usd
+    log.info(
+        "[%s] Step 3: Invoking Claude (model=%s, max_turns=%d, budget=$%.2f, tools=%s)",
+        skill.name,
+        context.config.claude.model,
+        context.config.claude.max_turns,
+        budget,
+        ",".join(skill.allowed_tools()),
+    )
     try:
         result = claude_cli.invoke(
             review_prompt,
@@ -78,22 +106,37 @@ def _run_skill(
             permission_mode=context.config.claude.permission_mode,
         )
     except claude_cli.ClaudeError as e:
-        log.error("Skill %s failed: %s", skill.name, e)
+        log.error("[%s] Claude invocation FAILED: %s", skill.name, e)
         return SkillResult(
             skill_name=skill.name,
             summary=f"Error: {e}",
             raw_output=str(e),
         )
 
+    log.info(
+        "[%s] Claude responded: %d chars, session=%s, cost=$%.4f",
+        skill.name,
+        len(result.result),
+        result.session_id[:12] if result.session_id else "n/a",
+        result.cost_usd,
+    )
+
     # Parse findings from Claude's response
+    log.info("[%s] Step 4: Parsing findings...", skill.name)
     findings = skill.parse_findings(result.result)
-    log.info("Skill %s found %d issue(s)", skill.name, len(findings))
+    log.info(
+        "[%s] Parsed %d finding(s): %s",
+        skill.name,
+        len(findings),
+        ", ".join(f"{f.severity.value}:{f.file}:{f.line_start}" for f in findings[:10]),
+    )
 
     # Extract summary (last paragraph or ## Summary section)
     summary = ""
     if "## Summary" in result.result:
         summary = result.result.split("## Summary")[-1].strip()
 
+    log.info("[%s] COMPLETE — %d findings", skill.name, len(findings))
     return SkillResult(
         skill_name=skill.name,
         findings=findings,
@@ -189,20 +232,36 @@ def run_review(
         ) as progress:
             task = progress.add_task("Starting code_graph_search...", total=None)
 
+            log.info("=" * 50)
+            log.info("CODE_GRAPH_SEARCH: Initializing")
+            log.info("  Host: %s", config.graph.host)
+            log.info("  JAR path: %s", config.graph.jar_path or "(external)")
+            log.info("  MCP mode: %s", config.graph.mcp_mode)
+            log.info("=" * 50)
+
             if config.graph.jar_path:
+                log.info("Starting code_graph_search subprocess...")
                 graph_process = start_graph_server(config.graph, str(repo_dir))
+                log.info("Waiting for code_graph_search to be ready (timeout=%ds)...", config.graph.startup_timeout_seconds)
                 ready = wait_for_ready(
                     config.graph.host, config.graph.startup_timeout_seconds
                 )
                 if not ready:
+                    log.warning("code_graph_search did not start within timeout")
                     console.print("[yellow]code_graph_search failed to start, continuing without it[/yellow]")
                     use_graph = False
+                else:
+                    log.info("code_graph_search subprocess is ready")
             else:
                 # Assume it's already running
+                log.info("Checking external code_graph_search at %s...", config.graph.host)
                 client = GraphClient(config.graph.host)
                 if not client.healthy():
-                    console.print("[yellow]code_graph_search not reachable, continuing without it[/yellow]")
+                    log.warning("code_graph_search not reachable at %s", config.graph.host)
+                    console.print("[yellow]code_graph_search not reachable at %s, continuing without it[/yellow]" % config.graph.host)
                     use_graph = False
+                else:
+                    log.info("code_graph_search is healthy at %s", config.graph.host)
                 client.close()
 
             if use_graph:
@@ -211,26 +270,33 @@ def run_review(
                 # Register/reindex the repo so code_graph_search has fresh content
                 progress.update(task, description="Indexing repository...")
                 repo_id = f"{pr_data.owner}_{pr_data.repo}"
+                log.info("Registering/reindexing repo: id=%s, path=%s", repo_id, repo_dir)
                 try:
                     existing = graph_client.list_repos()
                     existing_ids = [r.get("id", "") for r in existing]
+                    log.info("Existing repos in graph: %s", existing_ids)
+
                     if repo_id in existing_ids:
+                        log.info("Repo %s already indexed — triggering reindex for fresh PR content", repo_id)
                         graph_client.reindex_repo(repo_id)
-                        log.info("Triggered reindex for repo %s", repo_id)
                     else:
+                        log.info("Repo %s not found — adding new repo at %s", repo_id, repo_dir)
                         graph_client.add_repo(
                             repo_id=repo_id,
                             name=f"{pr_data.owner}/{pr_data.repo}",
                             path=str(repo_dir),
                         )
-                        log.info("Added repo %s at %s", repo_id, repo_dir)
-                    # Wait for indexing to settle
+
+                    # Wait for indexing to complete
                     import time
+                    log.info("Waiting 5s for indexing to complete...")
                     time.sleep(5)
+                    log.info("Indexing wait complete — graph should reflect PR branch content")
                 except Exception:
                     log.warning("Failed to register/reindex repo in code_graph_search", exc_info=True)
 
                 progress.update(task, description="code_graph_search ready")
+                log.info("CODE_GRAPH_SEARCH: Ready for queries")
 
                 # Generate MCP config if mcp_mode is enabled
                 if config.graph.mcp_mode and config.graph.jar_path:

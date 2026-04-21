@@ -101,39 +101,28 @@ class GoSkill(BaseSkill):
         if not context.graph_client:
             return {}
 
-        extra: dict[str, Any] = {}
-        interface_info = []
+        from review_tool.diff_parser import extract_changed_symbols, symbols_for_language
+        from review_tool.graph_analyzer import run_full_analysis
 
-        for fc in context.pr.files:
-            if not fc.path.endswith(GO_EXTENSIONS) or fc.status == "removed":
-                continue
-            try:
-                results = context.graph_client.search(fc.path, limit=10)
-                for elem in results[:5]:
-                    eid = elem.get("id", "")
-                    etype = elem.get("elementType", "")
-                    if not eid:
-                        continue
-                    if etype in ("INTERFACE", "STRUCT"):
-                        children = context.graph_client.get_children(eid)
-                        callers = context.graph_client.get_callers(eid) if etype == "FUNCTION" else []
-                        info: dict[str, Any] = {
-                            "type": etype,
-                            "name": elem.get("qualifiedName", elem.get("name", "")),
-                            "members": [c.get("name", "") for c in children[:15]],
-                        }
-                        if callers:
-                            info["callers"] = [
-                                c.get("qualifiedName", c.get("name", ""))
-                                for c in callers[:10]
-                            ]
-                        interface_info.append(info)
-            except Exception:
-                log.debug("Graph query failed for %s", fc.path, exc_info=True)
+        log.info("[go] Running graph pre-analysis for Go review")
+        all_symbols = extract_changed_symbols(context.pr.diff_text)
+        symbols = symbols_for_language(all_symbols, "go")
+        if not symbols:
+            log.info("[go] No Go symbols extracted from diff — skipping graph analysis")
+            return {}
 
-        if interface_info:
-            extra["type_definitions"] = interface_info
-        return extra
+        repo_id = f"{context.pr.owner}_{context.pr.repo}"
+        analysis = run_full_analysis(
+            context.graph_client,
+            symbols,
+            repo_id,
+            include_callers=True,     # Who calls changed functions?
+            include_callees=True,     # What does this call? (error chain, goroutine spawns)
+            include_hierarchies=True, # Interface satisfaction
+            include_children=True,    # Struct fields, interface methods
+            include_parents=True,     # Enclosing package
+        )
+        return analysis.to_prompt_context()
 
 
 SkillRegistry.register(GoSkill())

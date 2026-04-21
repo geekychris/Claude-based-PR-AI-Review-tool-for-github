@@ -90,37 +90,27 @@ class PerformanceSkill(BaseSkill):
         if not context.graph_client:
             return {}
 
-        extra: dict[str, Any] = {}
-        call_chains = []
+        from review_tool.diff_parser import extract_changed_symbols
+        from review_tool.graph_analyzer import run_full_analysis
 
-        for fc in context.pr.files:
-            if fc.status == "removed":
-                continue
-            try:
-                results = context.graph_client.search(
-                    fc.path, element_type="METHOD", limit=10
-                )
-                for elem in results[:3]:
-                    eid = elem.get("id", "")
-                    if not eid:
-                        continue
-                    callees = context.graph_client.get_callees(eid)
-                    if callees:
-                        call_chains.append(
-                            {
-                                "method": elem.get("qualifiedName", elem.get("name", "")),
-                                "calls": [
-                                    c.get("qualifiedName", c.get("name", ""))
-                                    for c in callees[:10]
-                                ],
-                            }
-                        )
-            except Exception:
-                log.debug("Graph query failed for %s", fc.path, exc_info=True)
+        log.info("[performance] Running graph pre-analysis for performance review")
+        symbols = extract_changed_symbols(context.pr.diff_text)
+        if not symbols:
+            log.info("[performance] No symbols extracted from diff — skipping graph analysis")
+            return {}
 
-        if call_chains:
-            extra["call_chains"] = call_chains
-        return extra
+        repo_id = f"{context.pr.owner}_{context.pr.repo}"
+        analysis = run_full_analysis(
+            context.graph_client,
+            symbols,
+            repo_id,
+            include_callers=True,     # Who calls this? Is it in a hot path?
+            include_callees=True,     # What does this call? Full cost chain.
+            include_hierarchies=False,
+            include_children=False,
+            include_parents=True,     # Is this in a request handler, loop body, etc?
+        )
+        return analysis.to_prompt_context()
 
 
 SkillRegistry.register(PerformanceSkill())

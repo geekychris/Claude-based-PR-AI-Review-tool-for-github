@@ -93,24 +93,27 @@ class SecuritySkill(BaseSkill):
         if not context.graph_client:
             return {}
 
-        extra: dict[str, Any] = {}
-        # Find functions that handle user input and trace to changed code
-        try:
-            input_handlers = context.graph_client.search(
-                "request input param query body", limit=20
-            )
-            if input_handlers:
-                extra["input_handlers"] = [
-                    {
-                        "name": h.get("qualifiedName", h.get("name", "")),
-                        "file": h.get("filePath", ""),
-                    }
-                    for h in input_handlers[:10]
-                ]
-        except Exception:
-            log.debug("Graph security pre-analysis failed", exc_info=True)
+        from review_tool.diff_parser import extract_changed_symbols
+        from review_tool.graph_analyzer import run_full_analysis
 
-        return extra
+        log.info("[security] Running graph pre-analysis for security review")
+        symbols = extract_changed_symbols(context.pr.diff_text)
+        if not symbols:
+            log.info("[security] No symbols extracted from diff — skipping graph analysis")
+            return {}
+
+        repo_id = f"{context.pr.owner}_{context.pr.repo}"
+        analysis = run_full_analysis(
+            context.graph_client,
+            symbols,
+            repo_id,
+            include_callers=True,     # Who calls this? Trace input sources.
+            include_callees=True,     # What does this call? Trace to sinks (DB, exec, file).
+            include_hierarchies=True, # Is this an auth middleware, controller, etc?
+            include_children=False,
+            include_parents=True,     # What class owns this? Is it a controller/handler?
+        )
+        return analysis.to_prompt_context()
 
 
 SkillRegistry.register(SecuritySkill())

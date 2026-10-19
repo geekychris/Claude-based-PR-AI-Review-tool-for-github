@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Claude Based PR Ai Review Tool For Github logo" width="180">
+</p>
+
 # review-tool
 
 AI-driven code review tool that analyzes GitHub pull requests using [Claude Code](https://claude.ai/code) in headless mode. It runs multiple specialized review passes (defects, security, quality, performance), optionally enriched with deep static analysis from [code_graph_search](https://github.com/geekychris/code_graph_search), and posts structured findings back to the PR.
